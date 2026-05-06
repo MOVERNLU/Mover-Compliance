@@ -492,8 +492,16 @@
           if (run && run.conclusion) break;
         }
 
-        if (!run) throw new Error('Timeout — the workflow took too long. Please try again.');
-        if (run.conclusion !== 'success') throw new Error(`Workflow failed: ${run.conclusion}`);
+        if (!run) {
+          // Check if there are ANY recent runs at all
+          const allRuns = await getRuns();
+          const recentRun = allRuns[0];
+          if (recentRun) {
+            throw new Error(`Timeout — last run was ${recentRun.status} (${recentRun.conclusion || 'pending'}) started at ${recentRun.created_at}. Trigger time was ${triggerTime.toISOString()}`);
+          }
+          throw new Error('Timeout — no workflow runs found. Check GitHub Actions tab.');
+        }
+        if (run.conclusion !== 'success') throw new Error(`Workflow failed: ${run.conclusion} — check GitHub Actions for details.`);
 
         // 4. Fetch result.json from repo
         const resultResp = await fetch(`${API}/repos/${REPO}/contents/result.json`, {
