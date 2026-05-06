@@ -1,0 +1,43 @@
+name: Compliance Check
+ 
+on:
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: "Mover user ID to check"
+        required: true
+ 
+permissions:
+  contents: write
+ 
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+ 
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+ 
+      - name: Run compliance check
+        env:
+          MOVER_EMAIL:    ${{ secrets.MOVER_EMAIL }}
+          MOVER_PASSWORD: ${{ secrets.MOVER_PASSWORD }}
+          USER_ID:        ${{ github.event.inputs.user_id }}
+        run: python compliance_check.py > result.json
+ 
+      - name: Save result
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add result.json
+          git commit -m "Compliance result for user ${{ github.event.inputs.user_id }}"
+          git push
