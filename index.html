@@ -1,631 +1,79 @@
-<!DOCTYPE html>
-<!-- saved from url=(0057)file:///C:/Users/NikolajLund-Mover/Downloads/index_1.html -->
-<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Compliance Checker — Mover</title>
-  <link href="./Compliance Checker — Mover_files/css2" rel="stylesheet">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --teal: #2ec4a5;
-      --teal-dark: #25a98d;
-      --teal-light: #e8f9f5;
-      --navy: #0a3d5c;
-      --navy-light: #0d4a6e;
-      --text: #1a1a2e;
-      --text-muted: #6b7280;
-      --border: #e5e7eb;
-      --bg: #f3f4f6;
-      --white: #ffffff;
-      --red: #ef4444;
-      --red-light: #fef2f2;
-      --green: #22c55e;
-      --green-light: #f0fdf4;
-      --yellow: #f59e0b;
-      --yellow-light: #fffbeb;
-      --radius: 10px;
-      --shadow: 0 1px 4px rgba(0,0,0,0.08);
-      --shadow-md: 0 4px 16px rgba(0,0,0,0.10);
+import os
+import json
+import requests
+from bs4 import BeautifulSoup
+ 
+EMAIL    = os.environ["MOVER_EMAIL"]
+PASSWORD = os.environ["MOVER_PASSWORD"]
+USER_ID  = os.environ["USER_ID"]
+ 
+BASE = "https://admin.mover.dk"
+ 
+session = requests.Session()
+ 
+# ── Login ──────────────────────────────────────────────────
+login_page = session.get(f"{BASE}/dk/da/user-area/login/")
+soup = BeautifulSoup(login_page.text, "html.parser")
+csrf = soup.find("input", {"name": "__RequestVerificationToken"})
+csrf_val = csrf["value"] if csrf else ""
+ 
+session.post(f"{BASE}/dk/da/user-area/login/", data={
+    "Email": EMAIL,
+    "Password": PASSWORD,
+    "__RequestVerificationToken": csrf_val
+})
+ 
+results = {}
+ 
+# ── Helper ─────────────────────────────────────────────────
+def get_page(path):
+    r = session.get(f"{BASE}/dk/da/user-area/users/{USER_ID}/{path}")
+    return BeautifulSoup(r.text, "html.parser")
+ 
+# ── Check 1: Chat enabled (Settings) ──────────────────────
+try:
+    doc = get_page("settings/")
+    html = doc.body.get_text(" ", strip=True).lower()
+    raw  = str(doc).lower()
+    # Find checkbox near "show chat option"
+    idx = raw.find("show chat option")
+    snippet = raw[max(0, idx-300):idx+300] if idx != -1 else ""
+    # Look for checked input before the label
+    checked = False
+    for inp in doc.find_all("input", {"type": "checkbox"}):
+        label = inp.find_next("label") or inp.find_previous("label")
+        label_text = label.get_text(strip=True).lower() if label else ""
+        if "show chat option" in label_text or "show chat" in label_text:
+            checked = inp.get("checked") is not None or "checked" in str(inp)
+            break
+    # Fallback: check raw snippet
+    if not checked and idx != -1:
+        checked = 'checked' in snippet
+ 
+    results["chat_enabled"] = {
+        "status": "pass" if checked else "fail",
+        "detail": "Show chat option er aktiveret" if checked else "Show chat option er ikke aktiveret"
     }
-
-    body {
-      font-family: 'DM Sans', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
+except Exception as e:
+    results["chat_enabled"] = {"status": "warn", "detail": str(e)}
+ 
+# ── Check 2: User status (Overview) ───────────────────────
+try:
+    doc = get_page("overview/")
+    status_label = doc.find(string=lambda t: t and "status" in t.lower())
+    status_val = ""
+    if status_label:
+        parent = status_label.find_parent()
+        if parent:
+            nxt = parent.find_next_sibling()
+            status_val = nxt.get_text(strip=True) if nxt else parent.get_text(strip=True)
+    active = "active" in status_val.lower()
+    results["user_active"] = {
+        "status": "pass" if active else "fail",
+        "detail": f"Status: {status_val}" if status_val else "Status ikke fundet"
     }
-
-    /* ── TOP BAR ─────────────────────────────────────────── */
-    header {
-      background: #0a3d5c;
-      height: 56px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 32px;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-    }
-
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-    }
-
-        .header-divider {
-      width: 1px;
-      height: 24px;
-      background: rgba(255,255,255,0.2);
-    }
-
-    .header-title {
-      color: rgba(255,255,255,0.9);
-      font-size: 14px;
-      font-weight: 500;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--teal);
-      display: inline-block;
-    }
-
-    .header-right {
-      font-size: 13px;
-      color: rgba(255,255,255,0.5);
-    }
-
-    /* ── MAIN ─────────────────────────────────────────────── */
-    main {
-      max-width: 760px;
-      margin: 0 auto;
-      padding: 48px 24px 80px;
-    }
-
-    /* ── STAT CARDS ───────────────────────────────────────── */
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-bottom: 40px;
-    }
-
-    .stat-card {
-      background: var(--white);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      padding: 20px 24px;
-      box-shadow: var(--shadow);
-    }
-
-    .stat-label {
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .stat-value {
-      font-size: 28px;
-      font-weight: 600;
-      color: var(--teal);
-    }
-
-    .stat-value.dark { color: var(--text); }
-
-    /* ── SEARCH SECTION ───────────────────────────────────── */
-    .search-section {
-      background: var(--white);
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      box-shadow: var(--shadow);
-      padding: 32px;
-      margin-bottom: 28px;
-    }
-
-    .section-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 20px;
-    }
-
-    .search-row {
-      display: flex;
-      gap: 12px;
-    }
-
-    .id-input {
-      flex: 1;
-      height: 44px;
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      padding: 0 16px;
-      font-size: 15px;
-      font-family: 'DM Sans', sans-serif;
-      color: var(--text);
-      background: var(--white);
-      outline: none;
-      transition: border-color 0.15s;
-    }
-
-    .id-input::placeholder { color: #b0b7c3; }
-    .id-input:focus { border-color: var(--teal); }
-
-    .btn-check {
-      height: 44px;
-      padding: 0 24px;
-      background: var(--teal);
-      color: var(--white);
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: 'DM Sans', sans-serif;
-      cursor: pointer;
-      transition: background 0.15s;
-      white-space: nowrap;
-    }
-
-    .btn-check:hover { background: var(--teal-dark); }
-    .btn-check:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .btn-outline {
-      height: 44px;
-      padding: 0 20px;
-      background: transparent;
-      color: var(--text-muted);
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 500;
-      font-family: 'DM Sans', sans-serif;
-      cursor: pointer;
-      transition: border-color 0.15s, color 0.15s;
-    }
-
-    .btn-outline:hover { border-color: var(--teal); color: var(--teal); }
-
-    /* ── SPINNER ──────────────────────────────────────────── */
-    .spinner-wrap {
-      display: none;
-      justify-content: center;
-      align-items: center;
-      padding: 48px;
-    }
-
-    .spinner-wrap.visible { display: flex; }
-
-    .spinner {
-      width: 36px;
-      height: 36px;
-      border: 3px solid var(--border);
-      border-top-color: var(--teal);
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── RESULTS ──────────────────────────────────────────── */
-    .results {
-      display: none;
-    }
-
-    .results.visible { display: block; }
-
-    .result-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 16px;
-    }
-
-    .result-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .result-id-badge {
-      font-size: 12px;
-      background: var(--navy);
-      color: rgba(255,255,255,0.8);
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-weight: 500;
-    }
-
-    /* overall status banner */
-    .status-banner {
-      border-radius: var(--radius);
-      padding: 16px 20px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 15px;
-      font-weight: 600;
-    }
-
-    .status-banner.compliant   { background: var(--green-light); color: #166534; border: 1px solid #bbf7d0; }
-    .status-banner.warning     { background: var(--yellow-light); color: #92400e; border: 1px solid #fde68a; }
-    .status-banner.non-compliant { background: var(--red-light); color: #991b1b; border: 1px solid #fecaca; }
-
-    .status-icon { font-size: 20px; }
-
-    /* check list */
-    .check-list {
-      background: var(--white);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      box-shadow: var(--shadow);
-    }
-
-    .check-item {
-      display: flex;
-      align-items: center;
-      padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
-      gap: 14px;
-      transition: background 0.1s;
-    }
-
-    .check-item:last-child { border-bottom: none; }
-    .check-item:hover { background: #fafafa; }
-
-    .check-icon {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      flex-shrink: 0;
-    }
-
-    .check-icon.pass    { background: var(--green-light); color: var(--green); }
-    .check-icon.fail    { background: var(--red-light);   color: var(--red);   }
-    .check-icon.warn    { background: var(--yellow-light); color: var(--yellow); }
-    .check-icon.pending { background: var(--bg); color: var(--text-muted); }
-
-    .check-name {
-      flex: 1;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text);
-    }
-
-    .check-detail {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .check-tag {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 20px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .check-tag.pass { background: var(--green-light); color: #166534; }
-    .check-tag.fail { background: var(--red-light); color: #991b1b; }
-    .check-tag.warn { background: var(--yellow-light); color: #92400e; }
-    .check-tag.pending { background: var(--bg); color: var(--text-muted); }
-
-    /* ── ERROR STATE ──────────────────────────────────────── */
-    .error-box {
-      display: none;
-      background: var(--red-light);
-      border: 1px solid #fecaca;
-      border-radius: var(--radius);
-      padding: 16px 20px;
-      color: #991b1b;
-      font-size: 14px;
-      margin-top: 16px;
-    }
-
-    .error-box.visible { display: block; }
-
-    /* ── EMPTY STATE ──────────────────────────────────────── */
-    .empty-state {
-      text-align: center;
-      padding: 48px 24px;
-      color: var(--text-muted);
-    }
-
-    .empty-icon {
-      font-size: 40px;
-      margin-bottom: 12px;
-      opacity: 0.4;
-    }
-
-    .empty-text {
-      font-size: 14px;
-      line-height: 1.6;
-    }
-  </style>
-</head>
-<body>
-
-  <header>
-    <div class="header-left">
-      <img src="data:image/png;base64,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" alt="mover" style="height:36px;">
-      <div class="header-divider"></div>
-      <div class="header-title">
-        Compliance Control Bot
-        <span class="status-dot"></span>
-      </div>
-    </div>
-    <div class="header-right">NikolajLund/Mover-Compliance</div>
-  </header>
-
-  <main>
-
-    <!-- Stat cards -->
-    <div class="stats">
-      <div class="stat-card">
-        <div class="stat-label">Checks run today</div>
-        <div class="stat-value" id="stat-today">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Last checked ID</div>
-        <div class="stat-value dark" id="stat-last">-</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Non-compliant found</div>
-        <div class="stat-value" id="stat-fail">0</div>
-      </div>
-    </div>
-
-    <!-- Search -->
-    <div class="search-section">
-      <div class="section-title">Check compliance by ID</div>
-      <div class="search-row">
-        <input class="id-input" id="id-input" type="text" placeholder="Enter user ID — e.g. 880715" autocomplete="off">
-        <button class="btn-check" id="btn-check" onclick="runCheck()">Check</button>
-        <button class="btn-outline" onclick="clearResults()">Clear</button>
-      </div>
-      <div class="error-box visible" id="error-box">Kunne ikke tilgå Admin: Failed to fetch. Sørg for at være logget ind på admin.mover.dk.</div>
-    </div>
-
-    <!-- Loading -->
-    <div class="spinner-wrap" id="spinner">
-      <div class="spinner"></div>
-    </div>
-
-    <!-- Results -->
-    <div class="results" id="results">
-      <div class="result-header">
-        <div class="result-title">Compliance report</div>
-        <div class="result-id-badge" id="result-id-badge">ID: —</div>
-      </div>
-
-      <div class="status-banner" id="status-banner">
-        <span class="status-icon" id="status-icon"></span>
-        <span id="status-text"></span>
-      </div>
-
-      <div class="check-list" id="check-list"></div>
-    </div>
-
-    <!-- Empty state (shown before first check) -->
-    <div class="empty-state" id="empty-state" style="display: none;">
-      <div class="empty-icon">🔍</div>
-      <div class="empty-text">
-        Enter a user ID above to run a compliance check.<br>
-        Results will appear here.
-      </div>
-    </div>
-
-  </main>
-
-  <script>
-    // ── Session counters (in-memory) ─────────────────────────
-    let checksToday = 0;
-    let failCount   = 0;
-
-    // ── Compliance checks definition ─────────────────────────
-    // Each check has: id, name, fn(userData) -> {status:'pass'|'fail'|'warn'|'pending', detail}
-    // For now all checks return 'pending' with a placeholder message.
-    // Replace the logic inside each fn() once Admin API / scraping is set up.
-
-    const CHECKS = [
-      {
-        id: 'chat_enabled',
-        name: 'Chat enabled',
-        fetch: (id) => `https://admin.mover.dk/dk/da/user-area/users/${id}/settings/`,
-        fn: (doc) => {
-          // Find the "Show chat option" checkbox
-          const labels = doc.querySelectorAll('label');
-          for (const label of labels) {
-            if (label.textContent.trim().toLowerCase().includes('show chat option')) {
-              const checkbox = label.querySelector('input[type="checkbox"]')
-                || doc.querySelector(`input#${label.htmlFor}`)
-                || label.previousElementSibling;
-              // Also search nearby inputs
-              const parent = label.closest('div, p, li') || label.parentElement;
-              const input = parent ? parent.querySelector('input[type="checkbox"]') : null;
-              const checked = (checkbox && checkbox.checked) || (input && input.checked);
-              return checked
-                ? { status: 'pass', detail: 'Show chat option er aktiveret' }
-                : { status: 'fail', detail: 'Show chat option er ikke aktiveret' };
-            }
-          }
-          // Fallback: search all checkboxes near "chat" text
-          const allText = doc.body.innerHTML.toLowerCase();
-          const chatIdx = allText.indexOf('show chat option');
-          if (chatIdx === -1) return { status: 'warn', detail: 'Chat-indstilling ikke fundet på siden' };
-          // Parse surrounding HTML for checked state
-          const snippet = doc.body.innerHTML.substring(Math.max(0, chatIdx - 200), chatIdx + 200);
-          const isChecked = snippet.includes('checked');
-          return isChecked
-            ? { status: 'pass', detail: 'Show chat option er aktiveret' }
-            : { status: 'fail', detail: 'Show chat option er ikke aktiveret' };
-        }
-      },
-      // ── Flere checks tilføjes her efterhånden ──
-    ];
-
-    // ── Fetch en Admin-side og returner parsed dokument ───────
-    async function fetchAdminPage(url) {
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error(`HTTP ${res.status} fra Admin`);
-      const html = await res.text();
-      const parser = new DOMParser();
-      return parser.parseFromString(html, 'text/html');
-    }
-
-    // ── Main check function ───────────────────────────────────
-    async function runCheck() {
-      const input = document.getElementById('id-input');
-      const id = input.value.trim();
-
-      if (!id) { showError('Indtast venligst et bruger-ID.'); return; }
-      if (!/^\d+$/.test(id)) { showError('ID skal være et tal.'); return; }
-
-      hideError();
-      showSpinner(true);
-      hideResults();
-      hideEmpty();
-
-      try {
-        // Hent først overview for at bekræfte brugeren eksisterer
-        const overviewDoc = await fetchAdminPage(
-          `https://admin.mover.dk/dk/da/user-area/users/${id}/overview/`
-        );
-
-        // Tjek om vi blev redirected til login
-        if (overviewDoc.title.toLowerCase().includes('log in') ||
-            overviewDoc.title.toLowerCase().includes('login')) {
-          showError('Du er ikke logget ind i Admin. Åbn admin.mover.dk i en anden fane og log ind først.');
-          return;
-        }
-
-        // Hent brugerens navn fra titlen
-        const userName = overviewDoc.title.replace('Mover', '').trim() || `ID ${id}`;
-
-        // Kør alle checks
-        const results = [];
-        for (const check of CHECKS) {
-          try {
-            const doc = await fetchAdminPage(check.fetch(id));
-            const result = check.fn(doc);
-            results.push({ ...check, result });
-          } catch (e) {
-            results.push({ ...check, result: { status: 'warn', detail: `Kunne ikke hente siden: ${e.message}` } });
-          }
-        }
-
-        // Opdater tællere
-        checksToday++;
-        document.getElementById('stat-today').textContent = checksToday;
-        document.getElementById('stat-last').textContent = id;
-
-        const fails = results.filter(r => r.result.status === 'fail').length;
-        const warns = results.filter(r => r.result.status === 'warn').length;
-        if (fails > 0) failCount++;
-        document.getElementById('stat-fail').textContent = failCount;
-
-        renderResults(id, results, fails, warns, userName);
-
-      } catch (err) {
-        showError(`Kunne ikke tilgå Admin: ${err.message}. Sørg for at være logget ind på admin.mover.dk.`);
-      } finally {
-        showSpinner(false);
-      }
-    }
-
-    // ── Render results ────────────────────────────────────────
-    function renderResults(id, results, fails, warns, userName) {
-      document.getElementById('result-id-badge').textContent = `ID: ${id}${userName ? ' — ' + userName : ''}`;
-
-      const banner   = document.getElementById('status-banner');
-      const icon     = document.getElementById('status-icon');
-      const text     = document.getElementById('status-text');
-      const list     = document.getElementById('check-list');
-
-      // Overall status
-      if (fails > 0) {
-        banner.className = 'status-banner non-compliant';
-        icon.textContent = '✗';
-        text.textContent = `Non-compliant — ${fails} check${fails > 1 ? 's' : ''} failed`;
-      } else if (warns > 0) {
-        banner.className = 'status-banner warning';
-        icon.textContent = '⚠';
-        text.textContent = `Attention — ${warns} item${warns > 1 ? 's' : ''} need review`;
-      } else {
-        banner.className = 'status-banner compliant';
-        icon.textContent = '✓';
-        text.textContent = 'Compliant — all checks passed';
-      }
-
-      // Check rows
-      list.innerHTML = results.map(r => {
-        const s = r.result.status;
-        const icons = { pass: '✓', fail: '✗', warn: '⚠', pending: '–' };
-        return `
-          <div class="check-item">
-            <div class="check-icon ${s}">${icons[s]}</div>
-            <div class="check-name">${r.name}</div>
-            <div class="check-detail">${r.result.detail}</div>
-            <div class="check-tag ${s}">${s}</div>
-          </div>`;
-      }).join('');
-
-      document.getElementById('results').classList.add('visible');
-    }
-
-    // ── Helpers ───────────────────────────────────────────────
-    function clearResults() {
-      document.getElementById('id-input').value = '';
-      hideResults();
-      hideError();
-      document.getElementById('empty-state').style.display = 'block';
-    }
-
-    function showSpinner(show) {
-      document.getElementById('spinner').classList.toggle('visible', show);
-    }
-
-    function hideResults() {
-      document.getElementById('results').classList.remove('visible');
-    }
-
-    function hideEmpty() {
-      document.getElementById('empty-state').style.display = 'none';
-    }
-
-    function showError(msg) {
-      const el = document.getElementById('error-box');
-      el.textContent = msg;
-      el.classList.add('visible');
-    }
-
-    function hideError() {
-      document.getElementById('error-box').classList.remove('visible');
-    }
-
-    // ── Enter key support ─────────────────────────────────────
-    document.getElementById('id-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') runCheck();
-    });
-  </script>
-
-
-</body></html>
+except Exception as e:
+    results["user_active"] = {"status": "warn", "detail": str(e)}
+ 
+# ── Output JSON ────────────────────────────────────────────
+print(json.dumps(results))
