@@ -464,9 +464,8 @@
       hideEmpty();
 
       try {
-        // 1. Get current run count so we can detect the new run
-        const beforeRuns = await getRuns();
-        const beforeIds  = new Set(beforeRuns.map(r => r.id));
+        // 1. Record time before triggering
+        const triggerTime = new Date();
 
         // 2. Trigger workflow
         await fetch(`${API}/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
@@ -479,13 +478,18 @@
           body: JSON.stringify({ ref: 'main', inputs: { user_id: id } })
         });
 
-        // 3. Poll for the new run to complete (max 3 min)
+        // 3. Wait 3 seconds for GitHub to register the run
+        await sleep(3000);
+
+        // 4. Poll for completion (max 3 min, check every 4 seconds)
         let run = null;
-        for (let i = 0; i < 36; i++) {
-          await sleep(5000);
+        for (let i = 0; i < 45; i++) {
+          await sleep(4000);
           const runs = await getRuns();
-          run = runs.find(r => !beforeIds.has(r.id));
-          if (run && (run.status === 'completed' || run.conclusion)) break;
+          // Find runs created after we triggered
+          run = runs.find(r => new Date(r.created_at) >= triggerTime);
+          if (run && run.status === 'completed') break;
+          if (run && run.conclusion) break;
         }
 
         if (!run) throw new Error('Timeout — the workflow took too long. Please try again.');
